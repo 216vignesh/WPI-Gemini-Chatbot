@@ -1,0 +1,344 @@
+# app.py
+
+import os
+import json
+import faiss
+import uuid
+import requests
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+import streamlit as st
+
+# ------------------------------
+# Configuration
+# ------------------------------
+
+# Load environment variables
+load_dotenv()
+
+# Gemini API Configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = "gemini-1.5-flash"
+
+# FAISS and Metadata Files
+FAISS_INDEX_FILE = "faiss_university_courses.index"
+CHUNKED_DOCS_FILE = "chunked_docs.json"
+ID_TO_METADATA_FILE = "id_to_metadata.json"
+
+# Embedding Model
+EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
+
+# ------------------------------
+# Load FAISS Index and Metadata
+# ------------------------------
+
+@st.cache_resource
+def load_faiss_index(index_file):
+    if not os.path.exists(index_file):
+        st.error(f"FAISS index file '{index_file}' not found.")
+        return None
+    index = faiss.read_index(index_file)
+    return index
+
+@st.cache_data
+def load_metadata(chunked_docs_file, id_to_metadata_file):
+    if not os.path.exists(chunked_docs_file) or not os.path.exists(id_to_metadata_file):
+        st.error("Metadata files not found.")
+        return None, None
+    with open(chunked_docs_file, "r", encoding="utf-8") as f:
+        chunked_docs = json.load(f)
+    with open(id_to_metadata_file, "r", encoding="utf-8") as f:
+        id_to_metadata = json.load(f)
+    return chunked_docs, id_to_metadata
+
+# ------------------------------
+# Initialize Embedding Model
+# ------------------------------
+
+@st.cache_resource
+def initialize_embedder(model_name):
+    embedder = SentenceTransformer(model_name)
+    return embedder
+
+# ------------------------------
+# Initialize Gemini API
+# ------------------------------
+
+def initialize_gemini(api_key):
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    return model
+
+# ------------------------------
+# Semantic Search Function
+# ------------------------------
+
+def semantic_search(query, embedder, index, chunked_docs, id_to_metadata, top_k=5):
+    query_embedding = embedder.encode([query], convert_to_numpy=True)
+    distances, indices = index.search(query_embedding, top_k)
+    results = []
+    for dist, idx in zip(distances[0], indices[0]):
+        if idx == -1:
+            continue
+        doc_id = chunked_docs[idx]['id']
+        metadata = id_to_metadata.get(doc_id, {})
+        text = chunked_docs[idx]['text']
+        results.append({
+            "text": text,
+            "metadata": metadata,
+            "distance": dist
+        })
+    return results
+
+# ------------------------------
+# Generate Response via Gemini
+# ------------------------------
+
+def generate_response_gemini(model, query, context):
+    prompt = f"""Use the following context to answer the user's question.
+
+Context:
+{context}
+
+User Query:
+{query}
+
+Answer:"""
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+
+def main():
+    st.set_page_config(page_title="University Course Chatbot", layout="wide")
+    st.title("🎓 University Course Chatbot")
+    st.write("Ask me anything about university courses!")
+
+    # Load FAISS index and metadata
+    index = load_faiss_index(FAISS_INDEX_FILE)
+    chunked_docs, id_to_metadata = load_metadata(CHUNKED_DOCS_FILE, ID_TO_METADATA_FILE)
+
+    if index is None or chunked_docs is None or id_to_metadata is None:
+        st.stop()
+
+    # Initialize embedder
+    embedder = initialize_embedder(EMBEDDING_MODEL_NAME)
+
+    # Initialize Gemini API
+    if not GEMINI_API_KEY:
+        st.error("Please set the GEMINI_API_KEY in your .env file.")
+        st.stop()
+    model = initialize_gemini(GEMINI_API_KEY)
+
+    # User Input
+    user_query = st.text_input("You:", "")
+
+    if st.button("Send") and user_query:
+        with st.spinner("Chatbot is thinking..."):
+            # Perform semantic search
+            search_results = semantic_search(
+                query=user_query,
+                embedder=embedder,
+                index=index,
+                chunked_docs=chunked_docs,
+                id_to_metadata=id_to_metadata,
+                top_k=5
+            )
+
+            if not search_results:
+                st.write("Chatbot: I'm sorry, I couldn't find any relevant information.")
+            else:
+                # Compile context
+                context = "\n\n".join([res['text'] for res in search_results])
+
+                # Generate response via Gemini
+                response = generate_response_gemini(
+                    model=model,
+                    query=user_query,
+                    context=context
+                )
+
+                # Display response
+                st.write(f"**Chatbot:** {response}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+https://www.wpi.edu/offices/international-student-scholars-office
+https://www.wpi.edu/offices/international-student-scholars-office#connect
+https://www.wpi.edu/offices/international-house/student/forms
+https://www.aclu.org/know-your-rights/immigrants-rights
+https://www.aclu.org/know-your-rights/what-do-when-encountering-law-enforcement-airports-and-other-ports-entry-us
+https://www.aclunc.org/our-work/know-your-rights/know-your-rights-us-airports-and-ports-entry
+https://www.aclu.org/know-your-rights/stopped-by-police
+https://www.aclum.org/en/know-your-rights/know-your-rights-if-you-are-questioned-about-your-immigration-status
+https://www.aclu.org/documents/constitution-100-mile-border-zone
+https://www.aclum.org/en/know-your-rights
+https://www.mass.gov/info-details/tenant-rights
+https://www.mass.gov/info-details/massachusetts-identification-id-requirements
+https://www.wpi.edu/sites/default/files/inline-image/Student-Experiences/International-House/2019.7%20Getting%20a%20MA%20ID%20and%20Liquor%20ID.pdf
+https://www.uscis.gov/ar-11
+https://www.wpi.edu/offices/international-student-scholars-office#mail
+https://www.wpi.edu/offices/international-student-scholars-office#payment
+https://www.wpi.edu/offices/international-house/faculty/immigration-overview
+https://www.wpi.edu/offices/international-house/students/immigration/non-immigrant-visa
+https://www.wpi.edu/offices/international-house/students/immigration/student-exchange-visitor-program-sevis
+https://www.wpi.edu/offices/international-house/students/immigration/f1-status
+https://www.wpi.edu/offices/international-house/students/immigration/j1-status
+https://www.wpi.edu/offices/international-house/students/immigration/social-security
+https://www.wpi.edu/offices/international-house/students/immigration/traveling
+https://www.wpi.edu/offices/international-house/students/getting-a-visa
+https://www.wpi.edu/offices/international-house/students/traveling
+https://www.wpi.edu/offices/international-house/students/traveling/graduate-international-orientation
+https://www.wpi.edu/offices/international-house/faculty/health-insurance-care-us
+https://www.wpi.edu/offices/international-house/faculty/worcester-community-info
+https://www.wpi.edu/offices/international-house/faculty/useful-links
+https://www.wpi.edu/offices/international-house/meet-the-team
+https://www.wpi.edu/offices/international-house/faculty/forms
+
+
+
+
+
+# chatbot_pinecone.py
+
+import os
+import json
+from pinecone import Pinecone
+from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+import google.generativeai as genai
+import streamlit as st
+
+# ------------------------------
+# Configuration
+# ------------------------------
+
+# Load environment variables
+load_dotenv()
+
+# Gemini API Configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = "gemini-1.5-flash"
+
+# Pinecone API Configuration
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")  # e.g., "us-east1-aws"
+
+# Pinecone Index Configuration
+INDEX_NAME = "events-index"
+
+# Embedding Model
+EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
+
+# ------------------------------
+# Initialize Pinecone and Gemini
+# ------------------------------
+
+if not PINECONE_API_KEY:
+    st.error("Please set the PINECONE_API_KEY in your .env file.")
+    st.stop()
+if not PINECONE_ENV:
+    st.error("Please set the PINECONE_ENV in your .env file.")
+    st.stop()
+if not GEMINI_API_KEY:
+    st.error("Please set the GEMINI_API_KEY in your .env file.")
+    st.stop()
+
+pc=Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(INDEX_NAME)
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel(GEMINI_MODEL)
+
+# Initialize Embedder
+embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+
+# ------------------------------
+# Define Semantic Search Function
+# ------------------------------
+
+def semantic_search(query, embedder, index, top_k=5):
+    # Generate embedding for the query
+    query_embedding = embedder.encode([query], convert_to_numpy=True).tolist()
+    
+    # Query Pinecone
+    response = index.query(
+        vector=query_embedding[0],
+        top_k=top_k,
+        include_metadata=True
+    )
+    
+    results = []
+    for match in response.matches:
+        results.append({
+            "id": match.id,
+            "score": match.score,
+            "metadata": match.metadata,
+            "text": match.metadata.get("Description", "")
+        })
+    return results
+
+# ------------------------------
+# Define Function to Generate Response via Gemini
+# ------------------------------
+
+def generate_response_gemini(query, context):
+    prompt = f"""Use the following context to answer the user's question. Please note M in meeting patterns stand for Monday, T for Tuesday, W for Wednesday, R for Thursday, F for Friday
+
+Context:
+{context}
+
+User Query:
+{query}
+
+Answer:"""
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+
+def main():
+    st.set_page_config(page_title="University Course Chatbot", layout="wide")
+    st.title("🎓 University Course Chatbot")
+    st.write("Ask me anything about university courses!")
+    
+    # User Input
+    user_query = st.text_input("You:", "")
+    
+    if st.button("Send") and user_query:
+        with st.spinner("Chatbot is thinking..."):
+            # Perform semantic search
+            search_results = semantic_search(
+                query=user_query,
+                embedder=embedder,
+                index=index,
+                top_k=5
+            )
+            
+            if not search_results:
+                st.write("Chatbot: I'm sorry, I couldn't find any relevant information.")
+            else:
+                # Compile context
+                context = "\n\n".join([res for res in search_results])
+                print(context)
+                print(user_query)
+                # Generate response via Gemini
+                response = generate_response_gemini(
+                    query=user_query,
+                    context=context
+                )
+    
+                # Display response
+                st.write(f"**Chatbot:** {response}")
+
+if __name__ == "__main__":
+    main()
